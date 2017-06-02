@@ -60,6 +60,8 @@ from sensor_msgs.msg import (
     JointState,
 )
 
+import actionlib
+from cozmo_driver.msg import AnimAction
 
 # reused as original is not Python3 compatible
 class TransformBroadcaster(object):
@@ -156,6 +158,7 @@ class CozmoRos(object):
             'backpack_led', ColorRGBA, self._set_backpack_led, queue_size=1)
         self._twist_sub = rospy.Subscriber('cmd_vel', Twist, self._twist_callback, queue_size=1)
         self._say_sub = rospy.Subscriber('say', String, self._say_callback, queue_size=1)
+        #self._anim_sub = rospy.Subscriber('exec_anim', String, self._execute_animation, queue_size=1)
         self._head_sub = rospy.Subscriber('head_angle', Float64, self._move_head, queue_size=1)
         self._lift_sub = rospy.Subscriber('lift_height', Float64, self._move_lift, queue_size=1)
 
@@ -174,6 +177,19 @@ class CozmoRos(object):
         # camera info manager
         self._camera_info_manager.setURL(camera_info_url)
         self._camera_info_manager.loadCameraInfo()
+
+        #get list of available animations
+        self._anim_list = self._cozmo.anim_names
+        self._anim_as = actionlib.SimpleActionServer("exec_anim", 
+            AnimAction, execute_cb=self._execute_animation)
+        self._anim_as.start()
+
+        self._behavior_as = actionlib.SimpleActionServer("exec_behavior",
+            AnimAction, execute_cb=self._execute_behavior)
+        self._behavior_as.register_preempt_callback(self._stop_behavior)
+        self._behavior_as.start()
+        self._cur_behavior = None
+
 
     def _publish_diagnostics(self):
         # alias
@@ -197,6 +213,32 @@ class CozmoRos(object):
         # update message stamp and publish
         self._diag_array.header.stamp = rospy.Time.now()
         self._diag_pub.publish(self._diag_array)
+
+    def _execute_animation(self, goal):
+        action = self._cozmo.play_anim(name=goal.anim_name)
+        #make our own loop for cancels
+        action.wait_for_completed()
+        self._anim_as.set_succeeded()
+
+    def _execute_behavior(self, goal):
+
+        #look up the behavior names
+        behavior_type = cozmo.behavior.BehaviorTypes.FindFaces#cozmo.behavior.BehaviorTypes['FindFaces']
+
+        #behavior_type = self.behavior_list['find_faces']
+        self._cur_behavior = self._cozmo.run_timed_behavior(behavior_type,10)
+        #self._cur_behavior.wait_for_completed()
+        #self._behavior_as.set_succeeded()
+
+    def _stop_behavior(self):
+
+        if self._cozmo.is_behavior_running:
+            be = self._cozmo.current_behavior
+            be.stop()
+        #if self._cur_behavior is not None and self._cur_behavior.is_active():
+        #    self._cur_behavior.stop()
+        #self._behavior_as.set_preempted()
+
 
     def _move_head(self, cmd):
         """
