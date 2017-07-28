@@ -45,7 +45,8 @@ from tf2_msgs.msg import TFMessage
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import (
     Twist,
-    TransformStamped
+    TransformStamped,
+    Pose2D
 )
 from std_msgs.msg import (
     String,
@@ -61,7 +62,9 @@ from sensor_msgs.msg import (
 )
 
 import actionlib
-from cozmo_driver.msg import AnimAction
+from cozmo_driver.msg import AnimAction, AnimResult
+from PIL import Image as PILImage
+
 
 # reused as original is not Python3 compatible
 class TransformBroadcaster(object):
@@ -147,6 +150,7 @@ class CozmoRos(object):
         # pubs
         self._joint_state_pub = rospy.Publisher('joint_states', JointState, queue_size=1)
         self._odom_pub = rospy.Publisher('odom', Odometry, queue_size=1)
+        self._pose_pub = rospy.Publisher('pose',Pose2D, queue_size=1)
         self._imu_pub = rospy.Publisher('imu', Imu, queue_size=1)
         self._battery_pub = rospy.Publisher('battery', BatteryState, queue_size=1)
         # Note: camera is published under global topic (preceding "/")
@@ -161,6 +165,7 @@ class CozmoRos(object):
         #self._anim_sub = rospy.Subscriber('exec_anim', String, self._execute_animation, queue_size=1)
         self._head_sub = rospy.Subscriber('head_angle', Float64, self._move_head, queue_size=1)
         self._lift_sub = rospy.Subscriber('lift_height', Float64, self._move_lift, queue_size=1)
+        self._face_sub = rospy.Subscriber('oled_face', Image, self._change_face, queue_size=1)
 
         # diagnostics
         self._diag_array = DiagnosticArray()
@@ -183,6 +188,10 @@ class CozmoRos(object):
         self._anim_as = actionlib.SimpleActionServer("exec_anim", 
             AnimAction, execute_cb=self._execute_animation)
         self._anim_as.start()
+
+        self._sleep_as = actionlib.SimpleActionServer("sleep_anim", 
+            AnimAction, execute_cb=self._execute_sleep)
+        self._sleep_as.start()
 
         self._behavior_as = actionlib.SimpleActionServer("exec_behavior",
             AnimAction, execute_cb=self._execute_behavior)
@@ -217,8 +226,20 @@ class CozmoRos(object):
     def _execute_animation(self, goal):
         action = self._cozmo.play_anim(name=goal.anim_name)
         #make our own loop for cancels
+        evt = action.wait_for_completed()
+        #check whether successed or not
+        _result = AnimResult()
+        _result.success = (evt.state == cozmo.action.ACTION_SUCCEEDED)
+        self._anim_as.set_succeeded(_result)
+
+    def _execute_sleep(self, goal):
+        size = cozmo.oled_face.dimensions()
+        img = PILImage.new('1', size)
+        byte_arr = cozmo.oled_face.convert_image_to_screen_data(img)
+        action = self._cozmo.play_anim(name=goal.anim_name)
         action.wait_for_completed()
-        self._anim_as.set_succeeded()
+        self._cozmo.display_oled_face_image(byte_arr, 5000) 
+        self._sleep_as.set_succeeded()  
 
     def _execute_behavior(self, goal):
 
@@ -239,6 +260,13 @@ class CozmoRos(object):
         #    self._cur_behavior.stop()
         #self._behavior_as.set_preempted()
 
+    def _change_face(self, msg):
+        #msg.data
+        #for now we just display nothing
+        size = cozmo.oled_face.dimensions()
+        img = PILImage.new('1', size)
+        byte_arr = cozmo.oled_face.convert_image_to_screen_data(img)
+        self._cozmo.display_oled_face_image(byte_arr, 5000)
 
     def _move_head(self, cmd):
         """
@@ -444,6 +472,15 @@ class CozmoRos(object):
         odom.twist.covariance = np.diag([1e-2, 1e3, 1e3, 1e3, 1e3, 1e-2]).ravel()
         self._odom_pub.publish(odom)
 
+    def _publish_pose(self):
+
+        pose = Pose2D()
+        pose.x = self._cozmo.pose.position.x
+        pose.y = self._cozmo.pose.position.y
+        pose.theta = self._cozmo.pose_angle.degrees
+        self._pose_pub.publish(pose)
+
+
     def _publish_tf(self, update_rate):
         """
         Broadcast current transformations and update
@@ -517,6 +554,7 @@ class CozmoRos(object):
             self._publish_imu()
             self._publish_battery()
             self._publish_odometry()
+            self._publish_pose()
             self._publish_diagnostics()
             # send message repeatedly to avoid idle mode.
             # This might cause low battery soon
