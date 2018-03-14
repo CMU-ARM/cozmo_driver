@@ -186,15 +186,15 @@ class CozmoRos(object):
         #get list of available animations
         self._anim_list = self._cozmo.anim_names
         self._anim_as = actionlib.SimpleActionServer("exec_anim", 
-            AnimAction, execute_cb=self._execute_animation)
+            AnimAction, execute_cb=self._execute_animation, auto_start = False)
         self._anim_as.start()
 
         self._sleep_as = actionlib.SimpleActionServer("sleep_anim", 
-            AnimAction, execute_cb=self._execute_sleep)
+            AnimAction, execute_cb=self._execute_sleep, auto_start = False)
         self._sleep_as.start()
 
         self._behavior_as = actionlib.SimpleActionServer("exec_behavior",
-            AnimAction, execute_cb=self._execute_behavior)
+            AnimAction, execute_cb=self._execute_behavior, auto_start = False)
         self._behavior_as.register_preempt_callback(self._stop_behavior)
         self._behavior_as.start()
         self._cur_behavior = None
@@ -224,12 +224,14 @@ class CozmoRos(object):
         self._diag_pub.publish(self._diag_array)
 
     def _execute_animation(self, goal):
+        rospy.loginfo("cozmo_driver:attempt playing animation:{}".format(goal.anim_name))
         action = self._cozmo.play_anim(name=goal.anim_name)
         #make our own loop for cancels
         evt = action.wait_for_completed()
         #check whether successed or not
         _result = AnimResult()
         _result.success = (evt.state == cozmo.action.ACTION_SUCCEEDED)
+        rospy.loginfo("cozmo_driver:anim {} play attemp:{}".format(goal.anim_name,_result.success))
         self._anim_as.set_succeeded(_result)
 
     def _execute_sleep(self, goal):
@@ -582,11 +584,13 @@ def cozmo_app(coz_conn):
     coz_ros = CozmoRos(coz)
     coz_ros.run()
 
-
 if __name__ == '__main__':
     rospy.init_node('cozmo_driver')
     cozmo.setup_basic_logging()
-    try:
-        cozmo.connect(cozmo_app)
-    except cozmo.ConnectionError as e:
-        sys.exit('A connection error occurred: {}'.format(e))
+    while not rospy.is_shutdown():
+        try:
+            cozmo.connect(cozmo_app)
+        except cozmo.ConnectionError as e:
+            sys.exit('A connection error occurred: {}'.format(e))
+        except cozmo.exceptions.ConnectionAborted as e:
+            rospy.loginfo("driver disconnected")
