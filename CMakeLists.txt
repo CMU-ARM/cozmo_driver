@@ -10,6 +10,7 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   sensor_msgs
   actionlib_msgs
+  camera_info_manager_py
 )
 
 ## System dependencies are found with CMake's conventions

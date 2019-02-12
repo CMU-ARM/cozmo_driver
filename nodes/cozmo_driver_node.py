@@ -1,4 +1,4 @@
-#!/usr/bin/python3.5
+#!/usr/bin/python3
 # -*- encoding: utf-8 -*-
 """
 This file implements an ANKI Cozmo ROS driver.
